@@ -89,15 +89,17 @@ def update_tree(sync_path, path):
   subdirectories = path[:-1]
 
   tree = load_tree(sync_path)
-  tree_current = tree
+  current_tree = tree
   for subdirectory in subdirectories:
-    if subdirectory not in tree_current: tree_current[subdirectory] = {}
-    tree_current[subdirectory][SYNC_DATA] = True
-    tree_current[subdirectory][SYNC_TIME] = get_ms()
-    tree_current = tree_current[subdirectory]
+    if subdirectory not in current_tree: current_tree[subdirectory] = {}
+    current_tree[subdirectory][SYNC_TIME] = get_ms()
+    current_tree[subdirectory][SYNC_DATA] = True
+    current_tree = current_tree[subdirectory]
 
   # https://www.geeksforgeeks.org/get-current-time-in-milliseconds-using-python/
-  tree_current[filename] = tree_create_file(file_hash, get_ms())
+  if filename not in current_tree: current_tree[filename] = {}
+  current_tree[filename][SYNC_DATA] = file_hash
+  current_tree[filename][SYNC_TIME] = get_ms()
 
   dump_tree(tree, sync_path)
 
@@ -135,7 +137,7 @@ def transfer_local(sftp, path, remote):
   if sftp.isfile(remote):
     sftp.get(remote, path)
   if sftp.isdir(remote):
-    sftp.get_r(remote, path)
+    sftp.get_r(remote, os.path.join(*path_split(path)[:-1]))
   update_tree(LOCAL_SYNC_PATH, path_split(path))
 
 def remove_remote(sftp, path, remote):
@@ -143,7 +145,10 @@ def remove_remote(sftp, path, remote):
   if sftp.isfile(remote):
     sftp.remove(remote)
   if sftp.isdir(remote):
-    sftp.rmdir(remote)
+    # https://stackoverflow.com/questions/44151259/is-it-possible-to-remove-directory-with-some-contents-using-pysftp-module
+    # hacky solution...
+    sftp.execute('rm -rf ' + os.path.join(REMOTE_DIRECTORY, remote).replace(' ', '\\ '))
+    # sftp.rmdir(remote)
   update_tree(LOCAL_REMOTE_SYNC_PATH, path_split(path))
 
 def transfer_remote(sftp, path, remote):
@@ -155,7 +160,7 @@ def transfer_remote(sftp, path, remote):
       sftp.mkdir(remote)
     except IOError:
       pass
-    sftp.put_r(path, remote)
+    sftp.put_r(path, os.path.join(*path_split(remote)[:-1]))
   update_tree(LOCAL_REMOTE_SYNC_PATH, path_split(path))
 
 def remote_to_local(sftp, local_path, remote_path, local_tree, remote_tree):
@@ -212,6 +217,7 @@ def sync_recursive(sftp, local_tree, remote_tree, path):
 class Handler(FileSystemEventHandler):
   @staticmethod
   def on_any_event(event):
+    # print('event: ', event.event_type, event.src_path)
     split_path = path_split(event.src_path)
     if event.event_type not in ['modified', 'deleted', 'created']: return
     if event.src_path == '.': return
@@ -221,6 +227,7 @@ class Handler(FileSystemEventHandler):
     if LOCAL_REMOTE_SYNC_FILE in split_path: return
 
     # https://stackoverflow.com/questions/3167154/how-to-split-a-dos-path-into-its-components-in-python
+    # print('udpate: ', event.src_path)
     update_tree(LOCAL_SYNC_PATH, split_path)
 
 
