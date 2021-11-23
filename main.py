@@ -26,7 +26,7 @@ UPLOAD_TO_REMOTE = True
 SYNC_FILE = '.sync'
 LOCAL_REMOTE_SYNC_FILE = '.sync.remote'
 LOCAL_SYNC_PATH = os.path.join(LOCAL_DIRECTORY, SYNC_FILE)
-REMOTE_SYNC_PATH = os.path.join(REMOTE_DIRECTORY, SYNC_FILE)
+REMOTE_SYNC_PATH = os.path.join(LOCAL_DIRECTORY, SYNC_FILE)
 LOCAL_REMOTE_SYNC_PATH = os.path.join(LOCAL_DIRECTORY, LOCAL_REMOTE_SYNC_FILE)
 cnopts = pysftp.CnOpts()
 cnopts.hostkeys = None   
@@ -41,10 +41,14 @@ def path_split(path):
   return path.split('/')
 
 def is_file(tree):
-  return SYNC_DATA in tree
+  return isinstance(tree[SYNC_DATA], str) and exists(tree)
+def is_directory(tree):
+  return SYNC_DATA is True and exists(tree)
+def exists(tree):
+  return tree[SYNC_DATA] is not None
+def has_data_changed(tree1, tree2):
+  return tree1[SYNC_DATA] != tree2[SYNC_DATA] or is_directory(tree1[SYNC_DATA]) or is_directory(tree2[SYNC_DATA])
 
-def is_file_deleted(tree):
-  return tree[SYNC_DATA] == None
 
 EMPTY_TREE = {'.': {SYNC_TIME: get_ms()}}
 
@@ -63,6 +67,8 @@ def dump_tree(tree, path):
 def get_file_hash(path):
   sha1 = hashlib.sha1()
   sha1.update(path.encode('utf-8'))
+  if os.path.isdir(path):
+    return True
   if not os.path.exists(path):
     return None
   with open(path, 'rb') as f:
@@ -77,29 +83,29 @@ def get_name_hash(path):
   sha1.update(path.encode('utf-8'))
   return sha1.hexdigest()
 
-def update_tree(path):
+def update_tree(sync_path, path):
   file_hash = get_file_hash(os.path.join(*path))
   filename = path[-1]
   subdirectories = path[:-1]
 
-  tree = load_tree(LOCAL_SYNC_PATH)
+  tree = load_tree(sync_path)
   tree_current = tree
   for subdirectory in subdirectories:
     if subdirectory not in tree_current: tree_current[subdirectory] = {}
+    tree_current[subdirectory][SYNC_DATA] = True
     tree_current[subdirectory][SYNC_TIME] = get_ms()
     tree_current = tree_current[subdirectory]
 
-  if filename not in tree_current: tree_current[filename] = {}
   # https://www.geeksforgeeks.org/get-current-time-in-milliseconds-using-python/
-  tree_current[filename][SYNC_DATA] = file_hash
-  tree_current[filename][SYNC_TIME] = get_ms()
+  tree_current[filename] = tree_create_file(file_hash, get_ms())
 
-  dump_tree(tree, LOCAL_SYNC_PATH)
+  dump_tree(tree, sync_path)
 
 def sync_with_remote():
   if not UPLOAD_TO_REMOTE: return
 
   with pysftp.Connection(**REMOTE) as sftp:
+    sftp.chdir(REMOTE_DIRECTORY)
     try:
       sftp.get(REMOTE_SYNC_PATH, LOCAL_REMOTE_SYNC_PATH)
     except FileNotFoundError:
@@ -109,52 +115,68 @@ def sync_with_remote():
     remote_tree = load_tree(LOCAL_REMOTE_SYNC_PATH)
     local_tree = load_tree(LOCAL_SYNC_PATH)
     sync_recursive(sftp, local_tree[LOCAL_DIRECTORY], remote_tree[LOCAL_DIRECTORY], '')
+    sftp.put(LOCAL_REMOTE_SYNC_PATH, REMOTE_SYNC_PATH)
+    # print('put', LOCAL_REMOTE_SYNC_PATH, REMOTE_SYNC_PATH)
   print('done.')
 
 
-def remove_local_file(path):
+# os remove directory recursive python
+import shutil
+def remove_local(sftp, path, remote):
   print(f'remove local {path}')
-  if os.path.exists(path):
+  if os.path.isfile(path) or os.path.islink(path):
     os.remove(path)
-  else:
-    update_tree(path_split(path))
+  if os.path.isdir(path):
+    shutil.rmtree(path)
+  update_tree(LOCAL_SYNC_PATH, path_split(path))
 
-def add_local_file(sftp, path, remote):
-  print(f'add local {path}')
-  try:
-    try:
-      sftp.get(path, remote)
-    except IOError:
-      try:
-        os.mkdir(path)
-      except IOError:
-        pass
-      sftp.get_r(path, LOCAL_DIRECTORY)
-  except FileNotFoundError:
-    pass
+def transfer_local(sftp, path, remote):
+  print(f'transfer local {path}')
+  if sftp.isfile(remote):
+    sftp.get(remote, path)
+  if sftp.isdir(remote):
+    sftp.get_r(remote, path)
+  update_tree(LOCAL_SYNC_PATH, path_split(path))
 
-def remove_remote_file(sftp, remote):
+def remove_remote(sftp, path, remote):
   print(f'remove remote {remote}')
-  try:
+  if sftp.isfile(remote):
     sftp.remove(remote)
-  except FileNotFoundError:
-    print('TODO: remote file does not exist')
+  if sftp.isdir(remote):
+    sftp.rmdir(remote)
+  update_tree(LOCAL_REMOTE_SYNC_PATH, path_split(path))
 
-def add_remote_file(sftp, path, remote):
-  print(f'add remote {path}')
-  try:
+def transfer_remote(sftp, path, remote):
+  print(f'transfer remote {path}')
+  if os.path.isfile(path) or os.path.islink(path):
+    sftp.put(path, remote)
+  if os.path.isdir(path):
     try:
-      sftp.put(path, remote)
+      sftp.mkdir(remote)
     except IOError:
-      try:
-        sftp.mkdir(remote)
-      except IOError:
-        pass
-      print(path, remote)
-      sftp.put_r(path, remote)
-  except FileNotFoundError:
-    update_tree(path_split(path))
+      pass
+    sftp.put_r(path, remote)
+  update_tree(LOCAL_REMOTE_SYNC_PATH, path_split(path))
 
+def remote_to_local(sftp, local_path, remote_path, local_tree, remote_tree):
+  if exists(local_tree) and not exists(remote_tree):
+    remove_local(sftp, local_path, remote_path)
+  else:
+    transfer_local(sftp, local_path, remote_path)
+
+def local_to_remote(sftp, local_path, remote_path, local_tree, remote_tree):
+  if exists(remote_tree) and not exists(local_tree):
+    remove_remote(sftp, local_path, remote_path)
+  else:
+    transfer_remote(sftp, local_path, remote_path)
+
+
+
+def tree_create_file(data, time):
+  file = {}
+  file[SYNC_TIME] = time
+  file[SYNC_DATA] = data
+  return file
 
 
 def sync_recursive(sftp, local_tree, remote_tree, path):
@@ -163,38 +185,28 @@ def sync_recursive(sftp, local_tree, remote_tree, path):
     if key in [SYNC_DATA, SYNC_TIME]: continue
 
     local_path = os.path.join(LOCAL_DIRECTORY, path)
-    remote_path = os.path.join(REMOTE_DIRECTORY, path)
+    remote_path = os.path.join(LOCAL_DIRECTORY, path)
     local_path_key = os.path.join(local_path, key)
     remote_path_key = os.path.join(remote_path, key)
 
     if key not in local_tree:
-      local_tree[key] = {}
-      if SYNC_DATA in remote_tree[key]: local_tree[key][SYNC_DATA] = None
-      local_tree[key][SYNC_TIME] = 0
+      # print('notinlocal', local_tree, key, remote_tree, key)
+      local_tree[key] = tree_create_file(None, 0)
+      # update_tree(LOCAL_SYNC_PATH, path_split(local_path_key))
     if key not in remote_tree:
-      remote_tree[key] = {}
-      if SYNC_DATA in local_tree[key]: remote_tree[key][SYNC_DATA] = None
-      remote_tree[key][SYNC_TIME] = 0
+      # print('notinremote', local_tree, key, remote_tree, key)
+      remote_tree[key] = tree_create_file(None, 0)
+      # update_tree(LOCAL_REMOTE_SYNC_PATH, path_split(remote_path_key))
 
-    if is_file(local_tree[key]) or is_file(remote_tree[key]):
-      print(key, local_tree[key], remote_tree[key])
-      if local_tree[key][SYNC_DATA] != remote_tree[key][SYNC_DATA]:
-        # if the data has changed
-        local_sync_time = local_tree[key][SYNC_TIME]
-        remote_sync_time = remote_tree[key][SYNC_TIME]
-        if local_sync_time < remote_sync_time:
-          if is_file(remote_tree[key]) and is_file_deleted(remote_tree[key]):
-            remove_local_file(sftp, local_path_key)
-          else:
-            add_local_file(sftp, local_path_key, remote_path_key)
-        else:
-          if is_file(local_tree[key]) and is_file_deleted(local_tree[key]):
-            remove_remote_file(sftp, remote_path_key)
-          else:
-            add_remote_file(sftp, local_path_key, remote_path_key)
-    else: # both items are directories
+    if is_directory(local_tree[key]) and is_directory(remote_tree[key]):
       sync_recursive(sftp, local_tree[key], remote_tree[key], os.path.join(path, key))
-
+    elif has_data_changed(local_tree[key], remote_tree[key]):
+      local_sync_time = local_tree[key][SYNC_TIME]
+      remote_sync_time = remote_tree[key][SYNC_TIME]
+      if local_sync_time < remote_sync_time:
+        remote_to_local(sftp, local_path_key, remote_path_key, local_tree[key], remote_tree[key])
+      else:
+        local_to_remote(sftp, local_path_key, remote_path_key, local_tree[key], remote_tree[key])
 
 
 class Handler(FileSystemEventHandler):
@@ -202,13 +214,14 @@ class Handler(FileSystemEventHandler):
   def on_any_event(event):
     split_path = path_split(event.src_path)
     if event.event_type not in ['modified', 'deleted', 'created']: return
-    if event.is_directory: return
+    if event.src_path == '.': return
+    # if event.is_directory: return
     if '.git' in split_path: return
     if SYNC_FILE in split_path: return
     if LOCAL_REMOTE_SYNC_FILE in split_path: return
 
     # https://stackoverflow.com/questions/3167154/how-to-split-a-dos-path-into-its-components-in-python
-    update_tree(split_path)
+    update_tree(LOCAL_SYNC_PATH, split_path)
 
 
 
