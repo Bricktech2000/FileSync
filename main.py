@@ -83,6 +83,24 @@ def get_name_hash(path):
   sha1.update(path.encode('utf-8'))
   return sha1.hexdigest()
 
+def update_tree_recursive():
+  # https://stackoverflow.com/questions/19587118/iterating-through-directories-with-python
+  # https://stackoverflow.com/questions/7201203/python-current-directory-in-an-os-walk
+  print('updating index recursively.')
+  full_path = os.getcwd() + '/'
+  for subdir, dirs, files in os.walk(full_path):
+    for file in files:
+      update_tree_safe(LOCAL_SYNC_PATH, [LOCAL_DIRECTORY] + path_split(os.path.join(subdir.replace(full_path, '', 1), file)))
+  print('done.')
+
+def update_tree_safe(sync_path, path):
+    if len(path) == 1 and path[0] == '.': return
+    if len(path) > 1 and path[1] == '.git': return
+    if SYNC_FILE in path: return
+    if LOCAL_REMOTE_SYNC_FILE in path: return
+    update_tree(sync_path, path)
+
+
 def update_tree(sync_path, path):
   file_hash = get_file_hash(os.path.join(*path))
   filename = path[-1]
@@ -104,6 +122,7 @@ def update_tree(sync_path, path):
   dump_tree(tree, sync_path)
 
 def sync_with_remote():
+  print('syncing files with remote.')
   if not UPLOAD_TO_REMOTE: return
 
   with pysftp.Connection(**REMOTE) as sftp:
@@ -160,7 +179,7 @@ def transfer_remote(sftp, path, remote):
       sftp.mkdir(remote)
     except IOError:
       pass
-    sftp.put_r(path, os.path.join(*path_split(remote)[:-1]))
+    sftp.put_r(path, remote)
   update_tree(LOCAL_REMOTE_SYNC_PATH, path_split(path))
 
 def remote_to_local(sftp, local_path, remote_path, local_tree, remote_tree):
@@ -220,15 +239,9 @@ class Handler(FileSystemEventHandler):
     # print('event: ', event.event_type, event.src_path)
     split_path = path_split(event.src_path)
     if event.event_type not in ['modified', 'deleted', 'created']: return
-    if event.src_path == '.': return
-    # if event.is_directory: return
-    if '.git' in split_path: return
-    if SYNC_FILE in split_path: return
-    if LOCAL_REMOTE_SYNC_FILE in split_path: return
-
     # https://stackoverflow.com/questions/3167154/how-to-split-a-dos-path-into-its-components-in-python
     # print('udpate: ', event.src_path)
-    update_tree(LOCAL_SYNC_PATH, split_path)
+    update_tree_safe(LOCAL_SYNC_PATH, split_path)
 
 
 
@@ -237,9 +250,13 @@ observer.schedule(Handler(), LOCAL_DIRECTORY, recursive=True)
 observer.start()
 
 try:
+  print('watching for changes and updating index automatically.')
+  print('press Enter to sync files with remote based on current index.')
+  print('send `r` to force-update the index and sync files with remote.')
+  print()
   while True:
     if UPLOAD_TO_REMOTE:
-      input()
+      if input() == 'r': update_tree_recursive()
       sync_with_remote()
     else:
       time.sleep(1)
