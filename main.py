@@ -4,6 +4,7 @@
 # https://stackoverflow.com/questions/38939454/verify-host-key-with-pysftp
 
 import os
+import sys
 import time
 import json
 import pysftp
@@ -19,7 +20,7 @@ REMOTE = {
   'private_key': '~/.ssh/id_rsa'
 }
 LOCAL_CWD = os.getcwd()
-REMOTE_CWD = '/home/server/Files2/'
+REMOTE_CWD = '/home/server/Files/'
 BUF_SIZE = 65536
 UPLOAD_TO_REMOTE = True
 
@@ -83,7 +84,7 @@ def get_name_hash(path):
 def update_index_recursive():
   # https://stackoverflow.com/questions/19587118/iterating-through-directories-with-python
   # https://stackoverflow.com/questions/7201203/python-current-directory-in-an-os-walk
-  print('updating index recursively.')
+  print('updating index recursively...')
   full_path = LOCAL_CWD + '/'
   for subdir, dirs, files in os.walk(full_path):
     for file in files:
@@ -117,7 +118,7 @@ def update_index(sync_file, path):
   dump_index(index, sync_file)
 
 def sync_with_remote():
-  print('syncing files with remote.')
+  print('syncing files with remote...')
   if not UPLOAD_TO_REMOTE: return
 
   with pysftp.Connection(**REMOTE) as sftp:
@@ -140,13 +141,13 @@ import shutil
 
 def remote_to_local(sftp, path, local_index, remote_index):
   if exists(local_index) and not exists(remote_index):
-    print(f'remove local {path}')
+    print(f'deleting from local: {path}')
     if os.path.isfile(path) or os.path.islink(path):
       os.remove(path)
     if os.path.isdir(path):
       shutil.rmtree(path)
   else:
-    print(f'transfer local {path}')
+    print(f'downloading from remote: {path}')
     if sftp.isfile(path):
       sftp.get(path, path)
     if sftp.isdir(path):
@@ -155,7 +156,7 @@ def remote_to_local(sftp, path, local_index, remote_index):
 
 def local_to_remote(sftp, path, local_index, remote_index):
   if exists(remote_index) and not exists(local_index):
-    print(f'remove remote {path}')
+    print(f'deleting from remote: {path}')
     if sftp.isfile(path):
       sftp.remove(path)
     if sftp.isdir(path):
@@ -164,7 +165,7 @@ def local_to_remote(sftp, path, local_index, remote_index):
       sftp.execute('rm -rf ' + os.path.join(REMOTE_CWD, path).replace(' ', '\\ '))
       # sftp.rmdir(remote)
   else:
-    print(f'transfer remote {path}')
+    print(f'uploading to remote: {path}')
     if os.path.isfile(path) or os.path.islink(path):
       sftp.put(path, path)
     if os.path.isdir(path):
@@ -215,21 +216,33 @@ class Handler(FileSystemEventHandler):
 
 
 
-observer = Observer()
-observer.schedule(Handler(), '.', recursive=True)
-observer.start()
-
-try:
-  print('watching for changes and updating index automatically.')
-  print('press Enter to sync files with remote based on current index.')
-  print('send `r` to force-update the index and sync files with remote.')
+def watching():
   print()
-  while True:
-    if UPLOAD_TO_REMOTE:
-      if input() == 'r': update_index_recursive()
-      sync_with_remote()
-    else:
+  print('watching for changes and updating index automatically.')
+  print('run again with `index` as parameter to force-update the index.')
+  print('run again with `sync` as parameter to sync files with remote.')
+  print()
+
+def usage():
+  print('parameter parsing failed. exiting.')
+
+if len(sys.argv) == 1:
+  watching()
+  observer = Observer()
+  observer.schedule(Handler(), '.', recursive=True)
+  observer.start()
+  try:
+    while True:
       time.sleep(1)
-except KeyboardInterrupt:
-  observer.stop()
-  observer.join()
+  except KeyboardInterrupt:
+    observer.stop()
+    observer.join()
+elif len(sys.argv) == 2:
+  if sys.argv[1] == 'sync':
+    sync_with_remote()
+  elif sys.argv[1] == 'index':
+    update_index_recursive()
+  else:
+    usage()
+else:
+  usage()
