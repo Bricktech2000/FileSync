@@ -95,6 +95,8 @@ def update_index(sync_file, path):
   path = path_split(path)
   if len(path) == 1 and path[0] == '.': return
   if len(path) > 1 and path[1] == '.git': return
+  # if '.mp4' in path[-1]: return
+  # if 'node_modules' in path: return
   if SYNC_FILE in path: return
   if REMOTE_SYNC_FILE in path: return
 
@@ -131,6 +133,7 @@ def sync_with_remote():
       sftp.put(REMOTE_SYNC_FILE, SYNC_FILE)
     remote_index = load_index(REMOTE_SYNC_FILE)
     local_index = load_index(SYNC_FILE)
+    os.remove(REMOTE_SYNC_FILE)
     sync_recursive(sftp, local_index['.'], remote_index['.'], '')
     sftp.put(SYNC_FILE, SYNC_FILE)
   print('done.')
