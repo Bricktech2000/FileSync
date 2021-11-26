@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import json
+import base64
 import pysftp
 import hashlib
 from watchdog.observers import Observer
@@ -29,11 +30,11 @@ REMOTE_SYNC_FILE = '.sync.remote'
 cnopts = pysftp.CnOpts()
 cnopts.hostkeys = None   
 REMOTE['cnopts'] = cnopts
-SYNC_DATA = '.sync.data'
-SYNC_TIME = '.sync.time'
+SYNC_DATA = '.sd'
+SYNC_TIME = '.st'
 
 def get_ms():
-  return round(time.time() * 1000)
+  return round(time.time() * 1)
 
 def path_split(path):
   return path.split('/')
@@ -61,27 +62,25 @@ def load_index(path):
     return json.loads(f.read())
 
 def dump_index(index, path):
+  # https://stackoverflow.com/questions/16311562/python-json-without-whitespaces
   with open(path, 'w') as f:
-    f.write(json.dumps(index))
+    f.write(json.dumps(index, separators=(',', ':')))
 
-def get_file_hash(path):
-  sha1 = hashlib.sha1()
-  sha1.update(path.encode('utf-8'))
+def get_file_data(path):
   if os.path.isdir(path):
-    return True
+    return 0
+  if os.path.isfile(path) or os.path.islink(path):
+    return 1
   if not os.path.exists(path):
     return None
-  with open(path, 'rb') as f:
-    while True:
-      data = f.read(BUF_SIZE)
-      if not data: break
-      sha1.update(data)
-  return sha1.hexdigest()
 
-def get_name_hash(path):
-  sha1 = hashlib.sha1()
-  sha1.update(path.encode('utf-8'))
-  return sha1.hexdigest()
+def hash(input):
+  # https://docs.python.org/3/library/hashlib.html
+  sha256 = hashlib.sha256()
+  sha256.update(input.encode('utf-8'))
+  # only preserve 32 bits, remove trailing `=` signs
+  # print(base64.b64encode(sha256.digest()[0:4])[:-2].decode('utf-8'))
+  return base64.b64encode(sha256.digest()[0:4])[:-2].decode('utf-8')
 
 def update_index_recursive():
   # https://stackoverflow.com/questions/19587118/iterating-through-directories-with-python
@@ -109,21 +108,21 @@ def update_index(index, path):
   if not is_safe(path): return index
   path = path_split(path)
 
-  file_hash = get_file_hash(os.path.join(*path))
+  file_data = get_file_data(os.path.join(*path))
   filename = path[-1]
   subdirectories = path[:-1]
 
   current_index = index
   for subdirectory in subdirectories:
-    if subdirectory not in current_index: current_index[subdirectory] = {}
-    current_index[subdirectory][SYNC_TIME] = get_ms()
-    current_index[subdirectory][SYNC_DATA] = True
-    current_index = current_index[subdirectory]
+    if hash(subdirectory) not in current_index: current_index[hash(subdirectory)] = {}
+    current_index[hash(subdirectory)][SYNC_TIME] = get_ms()
+    current_index[hash(subdirectory)][SYNC_DATA] = 0
+    current_index = current_index[hash(subdirectory)]
 
   # https://www.geeksforgeeks.org/get-current-time-in-milliseconds-using-python/
-  if filename not in current_index: current_index[filename] = {}
-  current_index[filename][SYNC_DATA] = file_hash
-  current_index[filename][SYNC_TIME] = get_ms()
+  if filename not in current_index: current_index[hash(filename)] = {}
+  current_index[hash(filename)][SYNC_DATA] = file_data
+  current_index[hash(filename)][SYNC_TIME] = get_ms()
 
   return index
 
@@ -143,7 +142,8 @@ def sync_with_remote():
     remote_index = load_index(REMOTE_SYNC_FILE)
     local_index = load_index(SYNC_FILE)
     os.remove(REMOTE_SYNC_FILE)
-    sync_recursive(sftp, local_index['.'], remote_index['.'], '')
+    sync_recursive(sftp, local_index[hash('.')], remote_index[hash('.')], '')
+    print('updating remote sync file...')
     sftp.put(SYNC_FILE, SYNC_FILE)
   print('done.')
 
@@ -203,20 +203,20 @@ def sync_recursive(sftp, local_index, remote_index, path):
 
     full_path = os.path.join('.', path, key)
 
-    if key not in local_index:
-      local_index[key] = create_file(None, 0)
-    if key not in remote_index:
-      remote_index[key] = create_file(None, 0)
+    if hash(key) not in local_index:
+      local_index[hash(key)] = create_file(None, 0)
+    if hash(key) not in remote_index:
+      remote_index[hash(key)] = create_file(None, 0)
 
-    elif has_data_changed(local_index[key], remote_index[key]):
-      local_sync_time = local_index[key][SYNC_TIME]
-      remote_sync_time = remote_index[key][SYNC_TIME]
+    elif has_data_changed(local_index[hash(key)], remote_index[hash(key)]):
+      local_sync_time = local_index[hash(key)][SYNC_TIME]
+      remote_sync_time = remote_index[hash(key)][SYNC_TIME]
       if local_sync_time < remote_sync_time:
-        remote_to_local(sftp, full_path, local_index[key], remote_index[key])
+        remote_to_local(sftp, full_path, local_index[hash(key)], remote_index[hash(key)])
       else:
-        local_to_remote(sftp, full_path, local_index[key], remote_index[key])
-    if is_directory(local_index[key]) and is_directory(remote_index[key]):
-      sync_recursive(sftp, local_index[key], remote_index[key], os.path.join(path, key))
+        local_to_remote(sftp, full_path, local_index[hash(key)], remote_index[hash(key)])
+    if is_directory(local_index[hash(key)]) and is_directory(remote_index[hash(key)]):
+      sync_recursive(sftp, local_index[hash(key)], remote_index[hash(key)], os.path.join(path, key))
 
 
 class Handler(FileSystemEventHandler):
