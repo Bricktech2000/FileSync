@@ -23,6 +23,7 @@ LOCAL_CWD = os.getcwd()
 REMOTE_CWD = '/home/server/Files/'
 BUF_SIZE = 65536
 UPLOAD_TO_REMOTE = True
+FOLDERS_AS_FILE = ['.git', '..git', 'node_modules']
 
 SYNC_FILE = '.sync'
 REMOTE_SYNC_FILE = '.sync.remote'
@@ -40,9 +41,11 @@ def path_split(path):
 
 EMPTY_INDEX = {'.': {SYNC_TIME: get_ms()}}
 
-def is_file(index):
+def is_file(index, name):
+  if name in FOLDERS_AS_FILE: return True
   return index[SYNC_DATA] == 1 and exists(index)
-def is_directory(index):
+def is_directory(index, name):
+  if name in FOLDERS_AS_FILE: return False
   return index[SYNC_DATA] == 0 and exists(index)
 def exists(index):
   return index[SYNC_DATA] is not None
@@ -50,12 +53,13 @@ def has_data_changed(index1, index2):
   return index1[SYNC_TIME] != index2[SYNC_TIME]
 
 def get_file_data(path):
-  if os.path.isdir(path):
-    return 0
-  if os.path.isfile(path) or os.path.islink(path):
-    return 1
-  if not os.path.exists(path):
+  path_joined = os.path.join(path)
+  if not os.path.exists(path_joined):
     return None
+  if os.path.isfile(path_joined) or os.path.islink(path_joined) or path[-1] in FOLDERS_AS_FILE:
+    return 1
+  if os.path.isdir(path_joined):
+    return 0
 
 
 def load_index(path):
@@ -80,12 +84,12 @@ def update_index_recursive():
   index = EMPTY_INDEX
   for subdir, dirs, files in os.walk(full_path):
     for file in files:
-      update_index(index, os.path.join('.', subdir.replace(full_path, '', 1), file))
+      subdir = subdir.replace(full_path, '', 1)
+      update_index(index, os.path.join('.', subdir, file))
   dump_index(index, SYNC_FILE)
   print('done.')
 
 def is_safe(path):
-  path = path_split(path)
   if len(path) == 1 and path[0] == '.': return False
   if len(path) > 1 and path[1] == '.git': return False
   # if '.mp4' in path[-1]: return index
@@ -95,8 +99,13 @@ def is_safe(path):
   return True
 
 def update_index(index, path):
-  if not is_safe(path): return
   path = path_split(path)
+  if not is_safe(path): return
+
+  for name in path[:-1]:
+    if name in FOLDERS_AS_FILE:
+      return
+
 
   file_data = get_file_data(os.path.join(*path))
   filename = path[-1]
@@ -141,7 +150,7 @@ def sync_with_remote():
 import shutil
 
 def remote_to_local(sftp, path, local_index, remote_index):
-  if exists(local_index) and not exists(remote_index):
+  if not exists(remote_index):
     print(f'deleting from local: {path}')
     if os.path.isfile(path) or os.path.islink(path):
       os.remove(path)
@@ -156,7 +165,7 @@ def remote_to_local(sftp, path, local_index, remote_index):
   update_index(local_index, SYNC_FILE)
 
 def local_to_remote(sftp, path, local_index, remote_index):
-  if exists(remote_index) and not exists(local_index):
+  if not exists(local_index):
     print(f'deleting from remote: {path}')
     if sftp.isfile(path):
       sftp.remove(path)
@@ -197,7 +206,7 @@ def sync_recursive(sftp, local_index, remote_index, path):
     if key not in remote_index:
       remote_index[key] = create_file(None, 0)
 
-    if is_directory(local_index[key]) and is_directory(remote_index[key]):
+    if is_directory(local_index[key], key) and is_directory(remote_index[key], key):
       sync_recursive(sftp, local_index[key], remote_index[key], os.path.join(path, key))
     elif has_data_changed(local_index[key], remote_index[key]):
       local_sync_time = local_index[key][SYNC_TIME]
@@ -216,11 +225,11 @@ class Handler(FileSystemEventHandler):
     # https://stackoverflow.com/questions/24597025/using-python-watchdog-to-monitor-a-folder-but-when-i-rename-a-file-i-havent-b
     # https://stackoverflow.com/questions/3167154/how-to-split-a-dos-path-into-its-components-in-python
     if event.event_type in ['modified', 'deleted', 'created', 'moved']:
-      if is_safe(event.src_path): 
+      if is_safe(path_split(event.src_path)): 
         print(f'updating index: {event.src_path}')
         update_index(index, event.src_path)
     if event.event_type in ['moved']:
-      if is_safe(event.dest_path):
+      if is_safe(path_split(event.dest_path)):
         print(f'updating index: {event.dest_path}')
         update_index(index, event.dest_path)
 
