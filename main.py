@@ -13,12 +13,9 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 
-REMOTE = {
-  'host': 'admin-bricktech2000.emilien.ca',
-  'port': 55522,
-  'username': 'server',
-  'private_key': '~/.ssh/id_rsa'
-}
+with open('remote.json', 'r') as f:
+  REMOTE = json.loads(f.read())
+
 LOCAL_CWD = os.getcwd()
 REMOTE_CWD = '/home/server/Files/'
 BUF_SIZE = 65536
