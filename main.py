@@ -26,6 +26,7 @@ SYNC_FILE = '.sync'
 REMOTE_SYNC_FILE = '.sync.remote'
 cnopts = pysftp.CnOpts()
 cnopts.hostkeys = None   
+cnopts.compression = True
 REMOTE['cnopts'] = cnopts
 SYNC_DATA = '.sd'
 SYNC_TIME = '.st'
