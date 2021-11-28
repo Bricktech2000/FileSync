@@ -51,12 +51,12 @@ def has_data_changed(index1, index2):
   return index1[SYNC_TIME] != index2[SYNC_TIME]
 
 def get_file_data(path):
-  path_joined = os.path.join(path)
-  if not os.path.exists(path_joined):
+  split_path = path_split(path)
+  if not os.path.exists(path):
     return None
-  if os.path.isfile(path_joined) or os.path.islink(path_joined) or path[-1] in FOLDERS_AS_FILE:
+  if os.path.isfile(path) or os.path.islink(path) or split_path[-1] in FOLDERS_AS_FILE:
     return 1
-  if os.path.isdir(path_joined):
+  if os.path.isdir(path):
     return 0
 
 
