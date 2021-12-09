@@ -41,12 +41,12 @@ EMPTY_INDEX = {'.': {SYNC_TIME: get_ms()}}
 
 def is_file(index, name):
   if name in FOLDERS_AS_FILE: return True
-  return index[SYNC_DATA] == 1 and exists(index)
+  return exists(index) and index[SYNC_DATA] == 1
 def is_directory(index, name):
   if name in FOLDERS_AS_FILE: return False
-  return index[SYNC_DATA] == 0 and exists(index)
+  return exists(index) and index[SYNC_DATA] == 0
 def exists(index):
-  return index[SYNC_DATA] is not None
+  return SYNC_DATA in index and index[SYNC_DATA] is not None
 def has_data_changed(index1, index2):
   return index1[SYNC_TIME] != index2[SYNC_TIME]
 
@@ -89,7 +89,6 @@ def update_index_recursive():
 
 def is_safe(path):
   if len(path) == 1 and path[0] == '.': return False
-  if len(path) > 1 and path[1] == '.git': return False
   # if '.mp4' in path[-1]: return index
   # if 'node_modules' in path: return index
   if SYNC_FILE in path: return False
@@ -224,6 +223,7 @@ class Handler(FileSystemEventHandler):
     # https://stackoverflow.com/questions/3167154/how-to-split-a-dos-path-into-its-components-in-python
     if event.event_type in ['modified', 'deleted', 'created', 'moved']:
       if is_safe(path_split(event.src_path)): 
+        if event.event_type in ['modified'] and get_file_data(event.src_path) == 0: return # file modified inside directory
         print(f'updating index: {event.src_path}')
         update_index(index, event.src_path)
     if event.event_type in ['moved']:
