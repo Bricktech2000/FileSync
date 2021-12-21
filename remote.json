@@ -1,5 +1,5 @@
 {
-  "host": "admin-bricktech2000.emilien.ca",
+  "host": "server.emilien.ca",
   "port": 55522,
   "username": "server",
   "private_key": "~/.ssh/id_rsa"
