@@ -5,6 +5,7 @@
 
 import os
 import sys
+from threading import current_thread
 import time
 import json
 import copy
@@ -23,6 +24,8 @@ FOLDERS_AS_FILE = ['.next', 'node_modules', 'target']
 
 SYNC_FILE = '.sync'
 REMOTE_SYNC_FILE = '.sync.remote'
+SYNC_LOCKFILE = '.sync.lock'
+REMOTE_SYNC_LOCKFILE = '.sync.lock.remote'
 cnopts = pysftp.CnOpts()
 cnopts.hostkeys = None   
 cnopts.compression = True
@@ -52,11 +55,11 @@ def has_data_changed(index1, index2):
 def get_file_data(path):
   split_path = path_split(path)
   if not os.path.exists(path):
-    return None
+    return None, get_ms()
   if os.path.isfile(path) or os.path.islink(path) or split_path[-1] in FOLDERS_AS_FILE:
-    return 1
+    return 1, get_ms()
   if os.path.isdir(path):
-    return 0
+    return 0, get_ms()
 
 
 def load_index(path):
@@ -89,7 +92,8 @@ def update_index_recursive():
   for subdir, dirs, files in os.walk(full_path):
     for file in files:
       subdir = subdir.replace(full_path, '', 1)
-      update_index(index, os.path.join('.', subdir, file))
+      path = os.path.join('.', subdir, file)
+      if is_safe(path_split(path)): update_index(index, path, get_file_data(path))
   dump_index(index, SYNC_FILE)
   print('done.')
 
@@ -99,32 +103,32 @@ def is_safe(path):
   # if 'node_modules' in path: return index
   if SYNC_FILE in path: return False
   if REMOTE_SYNC_FILE in path: return False
+  if SYNC_LOCKFILE in path: return False
+  if REMOTE_SYNC_LOCKFILE in path: return False
   return True
 
-def update_index(index, path):
+def update_index(index, path, file_data):
   path = path_split(path)
-  if not is_safe(path): return
 
   for name in path[:-1]:
     if name in FOLDERS_AS_FILE:
       return
 
-
-  file_data = get_file_data(os.path.join(*path))
+  update_data, update_time = file_data
   filename = path[-1]
   subdirectories = path[:-1]
 
   current_index = index
   for subdirectory in subdirectories:
     if subdirectory not in current_index: current_index[subdirectory] = {}
-    current_index[subdirectory][SYNC_TIME] = get_ms()
+    current_index[subdirectory][SYNC_TIME] = update_time
     current_index[subdirectory][SYNC_DATA] = 0
     current_index = current_index[subdirectory]
 
   # https://www.geeksforgeeks.org/get-current-time-in-milliseconds-using-python/
   if filename not in current_index: current_index[filename] = {}
-  current_index[filename][SYNC_TIME] = get_ms()
-  current_index[filename][SYNC_DATA] = file_data
+  current_index[filename][SYNC_TIME] = update_time
+  current_index[filename][SYNC_DATA] = update_data
 
 def sync_with_remote():
   print('syncing files with remote...')
@@ -138,21 +142,31 @@ def sync_with_remote():
       print('warning: remote sync file not found. uploading empty sync file instead.')
       dump_index(EMPTY_INDEX, REMOTE_SYNC_FILE)
       sftp.put(REMOTE_SYNC_FILE, SYNC_FILE)
+    
+    with open(SYNC_LOCKFILE, 'w') as f: pass
+    sftp.put(SYNC_LOCKFILE, SYNC_LOCKFILE)
+
     local_index = load_index(SYNC_FILE)
     remote_index = load_index(REMOTE_SYNC_FILE)
-    os.remove(REMOTE_SYNC_FILE)
-    sync_recursive(sftp, local_index['.'], remote_index['.'], '')
-    print('updating remote sync file...')
+    sync_recursive(sftp, local_index, local_index['.'], remote_index, remote_index['.'], '')
     dump_index(local_index, SYNC_FILE)
-    sftp.put(SYNC_FILE, SYNC_FILE)
+    dump_index(remote_index, REMOTE_SYNC_FILE)
+
+    print('updating remote sync file...')
+    sftp.put(REMOTE_SYNC_FILE, SYNC_FILE)
+    os.remove(REMOTE_SYNC_FILE)
+    sftp.remove(SYNC_LOCKFILE)
+    os.remove(SYNC_LOCKFILE)
+
+  time.sleep(.1)
   print('done.')
 
 
 # os remove directory recursive python
 import shutil
 
-def remote_to_local(sftp, path, local_index, remote_index):
-  if not exists(remote_index):
+def remote_to_local(sftp, path, remote_index_curr, local_index):
+  if not exists(remote_index_curr):
     print(f'deleting from local: {path}')
     if os.path.isfile(path) or os.path.islink(path):
       os.remove(path)
@@ -164,10 +178,10 @@ def remote_to_local(sftp, path, local_index, remote_index):
       sftp.get(path, path)
     if sftp.isdir(path):
       sftp.get_r(path, os.path.join(*path_split(path)[:-1]))
-  update_index(local_index, SYNC_FILE)
+  update_index(local_index, path, (remote_index_curr[SYNC_DATA], remote_index_curr[SYNC_TIME]))
 
-def local_to_remote(sftp, path, local_index, remote_index):
-  if not exists(local_index):
+def local_to_remote(sftp, path, local_index_curr, remote_index):
+  if not exists(local_index_curr):
     print(f'deleting from remote: {path}')
     if sftp.isfile(path):
       sftp.remove(path)
@@ -186,11 +200,9 @@ def local_to_remote(sftp, path, local_index, remote_index):
       except IOError:
         pass
       sftp.put_r(path, path)
-  update_index(local_index, SYNC_FILE)
+  update_index(remote_index, path, (local_index_curr[SYNC_DATA], local_index_curr[SYNC_TIME]))
 
-
-
-def sync_recursive(sftp, local_index, remote_index, path):
+def sync_recursive(sftp, local_index, local_index_curr, remote_index, remote_index_curr, path):
   def create_file(data, time):
     file = {}
     file[SYNC_TIME] = time
@@ -198,43 +210,59 @@ def sync_recursive(sftp, local_index, remote_index, path):
     return file
 
   # python union of two lists: https://www.pythonpool.com/python-union-of-lists/
-  for key in set().union(local_index.keys(), remote_index.keys()):
+  for key in set().union(local_index_curr.keys(), remote_index_curr.keys()):
     if key in [SYNC_DATA, SYNC_TIME]: continue
 
     full_path = os.path.join('.', path, key)
 
-    if key not in local_index:
-      local_index[key] = create_file(None, 0)
-    if key not in remote_index:
-      remote_index[key] = create_file(None, 0)
+    if key not in local_index_curr:
+      local_index_curr[key] = create_file(None, 0)
+    if key not in remote_index_curr:
+      remote_index_curr[key] = create_file(None, 0)
 
-    if is_directory(local_index[key], key) and is_directory(remote_index[key], key):
-      sync_recursive(sftp, local_index[key], remote_index[key], os.path.join(path, key))
-    elif has_data_changed(local_index[key], remote_index[key]):
-      local_sync_time = local_index[key][SYNC_TIME]
-      remote_sync_time = remote_index[key][SYNC_TIME]
+    if is_directory(local_index_curr[key], key) and is_directory(remote_index_curr[key], key):
+      sync_recursive(sftp, local_index, local_index_curr[key], remote_index, remote_index_curr[key], os.path.join(path, key))
+    elif has_data_changed(local_index_curr[key], remote_index_curr[key]):
+      local_sync_time = local_index_curr[key][SYNC_TIME]
+      remote_sync_time = remote_index_curr[key][SYNC_TIME]
       if local_sync_time < remote_sync_time:
-        remote_to_local(sftp, full_path, local_index[key], remote_index[key])
+        remote_to_local(sftp, full_path, remote_index_curr[key], local_index)
       else:
-        local_to_remote(sftp, full_path, local_index[key], remote_index[key])
+        local_to_remote(sftp, full_path, local_index_curr[key], remote_index)
+
 
 index = load_index(SYNC_FILE)
 last_index = copy.deepcopy(index)
+is_sync_lockfile_present = os.path.exists(SYNC_LOCKFILE)
+
 class Handler(FileSystemEventHandler):
   @staticmethod
   def on_any_event(event):
     global index
+    global is_sync_lockfile_present
     # https://stackoverflow.com/questions/24597025/using-python-watchdog-to-monitor-a-folder-but-when-i-rename-a-file-i-havent-b
     # https://stackoverflow.com/questions/3167154/how-to-split-a-dos-path-into-its-components-in-python
-    if event.event_type in ['modified', 'deleted', 'created', 'moved']:
-      if is_safe(path_split(event.src_path)): 
-        if event.event_type in ['modified'] and get_file_data(event.src_path) == 0: return # file modified inside directory
-        print(f'updating index: {event.src_path}')
-        update_index(index, event.src_path)
-    if event.event_type in ['moved']:
-      if is_safe(path_split(event.dest_path)):
-        print(f'updating index: {event.dest_path}')
-        update_index(index, event.dest_path)
+    if path_split(event.src_path)[-1] == SYNC_LOCKFILE:
+      if event.event_type in ['created', 'modified']:
+        print('sync lockfile got created. ignoring all changes to file system.')
+        is_sync_lockfile_present = True
+      if event.event_type in ['deleted', 'moved']:
+        print('sync lockfile got deleted. watching for changes to file system.')
+        is_sync_lockfile_present = False
+        index = load_index(SYNC_FILE)
+    if not is_sync_lockfile_present:
+      if event.event_type in ['modified', 'deleted', 'created', 'moved']:
+        if is_safe(path_split(event.src_path)): 
+          if event.event_type in ['modified'] and get_file_data(event.src_path) == 0: return # file modified inside directory
+          print(f'updating index: {event.src_path}')
+          update_index(index, event.src_path, get_file_data(event.src_path))
+      if event.event_type in ['moved']:
+        if is_safe(path_split(event.dest_path)):
+          print(f'updating index: {event.dest_path}')
+          update_index(index, event.dest_path, get_file_data(event.dest_path))
+    else:
+      if is_safe(path_split(event.src_path)):
+        print(f'warning: modification to file system was ignored: {event.src_path}')
 
 
 def safe_deepcopy(dict):
@@ -247,7 +275,8 @@ def safe_deepcopy(dict):
 
 def watching():
   print()
-  print('watching for changes and updating index automatically.')
+  if is_sync_lockfile_present: print('sync lockfile exists. ignoring all changes to file system.')
+  else: print('watching for changes and updating index automatically.')
   print('run again with `index` as parameter to force-update the index.')
   print('run again with `sync` as parameter to sync files with remote.')
   print()
