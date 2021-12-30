@@ -19,7 +19,6 @@ with open('remote.json', 'r') as f:
 LOCAL_CWD = os.getcwd()
 REMOTE_CWD = '/home/server/Files/'
 BUF_SIZE = 65536
-UPLOAD_TO_REMOTE = True
 FOLDERS_AS_FILE = ['.next', 'node_modules', 'target']
 
 SYNC_FILE = '.sync'
@@ -122,7 +121,6 @@ def update_index(index, path):
 
 def sync_with_remote():
   print('syncing files with remote...')
-  if not UPLOAD_TO_REMOTE: return
 
   with pysftp.Connection(**REMOTE) as sftp:
     sftp.chdir(REMOTE_CWD)
