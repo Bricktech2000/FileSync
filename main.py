@@ -77,7 +77,7 @@ def dump_index(index, path):
     with open(path, 'w') as f:
       f.write(json.dumps(index, separators=(',', ':')))
   except:
-    print(f'warning: could not store index: {path}')
+    print(f'warning: could not dump index: {path}')
 
 
 def update_index_recursive():
@@ -237,6 +237,13 @@ class Handler(FileSystemEventHandler):
         update_index(index, event.dest_path)
 
 
+def safe_deepcopy(dict):
+  while True:
+    try:
+      return copy.deepcopy(dict)
+    except:
+      print('warning: error deepcopying index. trying again...')
+      time.sleep(.1)
 
 def watching():
   print()
@@ -256,9 +263,9 @@ if len(sys.argv) == 1:
   try:
     while True:
       if index != last_index:
-        last_index = copy.deepcopy(index)
+        last_index = safe_deepcopy(index)
         dump_index(index, SYNC_FILE)
-      time.sleep(1)
+      time.sleep(.1)
   except KeyboardInterrupt:
     print('exiting...')
     dump_index(index, SYNC_FILE)
