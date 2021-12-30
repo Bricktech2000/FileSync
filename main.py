@@ -20,7 +20,7 @@ LOCAL_CWD = os.getcwd()
 REMOTE_CWD = '/home/server/Files/'
 BUF_SIZE = 65536
 UPLOAD_TO_REMOTE = True
-FOLDERS_AS_FILE = ['.next', 'node_modules']
+FOLDERS_AS_FILE = ['.next', 'node_modules', 'target']
 
 SYNC_FILE = '.sync'
 REMOTE_SYNC_FILE = '.sync.remote'
