@@ -60,17 +60,24 @@ def get_file_data(path):
 
 
 def load_index(path):
-  if not os.path.exists(path):
-    with open(path, 'w') as f:
-      f.write(json.dumps(EMPTY_INDEX))
+  try:
+    if not os.path.exists(path):
+      with open(path, 'w') as f:
+        f.write(json.dumps(EMPTY_INDEX))
 
-  with open(path, 'r') as f:
-    return json.loads(f.read())
+    with open(path, 'r') as f:
+      return json.loads(f.read())
+  except:
+    print(f'warning: could not load index: {path}')
+    return EMPTY_INDEX
 
 def dump_index(index, path):
-  # https://stackoverflow.com/questions/16311562/python-json-without-whitespaces
-  with open(path, 'w') as f:
-    f.write(json.dumps(index, separators=(',', ':')))
+  try:
+    # https://stackoverflow.com/questions/16311562/python-json-without-whitespaces
+    with open(path, 'w') as f:
+      f.write(json.dumps(index, separators=(',', ':')))
+  except:
+    print(f'warning: could not store index: {path}')
 
 
 def update_index_recursive():
