@@ -60,6 +60,7 @@ def get_file_data(path):
     return 1, get_ms()
   if os.path.isdir(path):
     return 0, get_ms()
+  print(f'warning: could not get file data: {path}')
 
 
 def load_index(path):
