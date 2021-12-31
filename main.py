@@ -60,7 +60,8 @@ def get_file_data(path):
     return 1, get_ms()
   if os.path.isdir(path):
     return 0, get_ms()
-  print(f'warning: could not get file data: {path}')
+  print(f'warning: could not get file data: {path}. file is assumed deleted')
+  return None, get_ms()
 
 
 def load_index(path):
