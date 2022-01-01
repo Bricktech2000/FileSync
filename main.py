@@ -34,6 +34,7 @@ SYNC_DATA = '.sd'
 SYNC_TIME = '.st'
 
 def get_ms():
+  # https://www.geeksforgeeks.org/get-current-time-in-milliseconds-using-python/
   return round(time.time() * 1)
 
 def path_split(path):
@@ -52,16 +53,22 @@ def exists(index):
 def has_data_changed(index1, index2):
   return index1[SYNC_TIME] != index2[SYNC_TIME]
 
+def create_file(data, time):
+  file = {}
+  file[SYNC_TIME] = time
+  file[SYNC_DATA] = data
+  return file
 def get_file_data(path):
   split_path = path_split(path)
   if not os.path.exists(path):
-    return None, get_ms()
+    return create_file(None, get_ms())
   if os.path.isfile(path) or os.path.islink(path) or split_path[-1] in FOLDERS_AS_FILE:
-    return 1, get_ms()
+    return create_file(1, get_ms())
   if os.path.isdir(path):
-    return 0, get_ms()
-  print(f'warning: could not get file data: {path}. file is assumed deleted')
-  return None, get_ms()
+    return create_file(0, get_ms())
+  print(f'debug: could not get file data: {path}. file is assumed deleted')
+  return create_file(None, get_ms())
+
 
 
 def load_index(path):
@@ -73,8 +80,8 @@ def load_index(path):
     with open(path, 'r') as f:
       return json.loads(f.read())
   except:
-    print(f'warning: could not load index: {path}')
-    return EMPTY_INDEX
+    print(f'error: could not load index: {path}')
+    raise Exception("could not load index")
 
 def dump_index(index, path):
   try:
@@ -116,21 +123,22 @@ def update_index(index, path, file_data):
     if name in FOLDERS_AS_FILE:
       return
 
-  update_data, update_time = file_data
   filename = path[-1]
   subdirectories = path[:-1]
 
   current_index = index
   for subdirectory in subdirectories:
     if subdirectory not in current_index: current_index[subdirectory] = {}
-    current_index[subdirectory][SYNC_TIME] = update_time
+    current_index[subdirectory][SYNC_TIME] = file_data[SYNC_TIME]
     current_index[subdirectory][SYNC_DATA] = 0
     current_index = current_index[subdirectory]
 
-  # https://www.geeksforgeeks.org/get-current-time-in-milliseconds-using-python/
+  # if filename in current_index:
+    # print(f'debug: filename already in index: {filename} with data: {current_index[filename]}')
+    # print(f'debug: overriding file with data: { {**current_index[filename], **file_data} }')
+  # https://stackoverflow.com/questions/38987/how-do-i-merge-two-dictionaries-in-a-single-expression-take-union-of-dictionari
   if filename not in current_index: current_index[filename] = {}
-  current_index[filename][SYNC_TIME] = update_time
-  current_index[filename][SYNC_DATA] = update_data
+  current_index[filename] = {**current_index[filename], **file_data}
 
 def sync_with_remote():
   print('syncing files with remote...')
@@ -180,7 +188,7 @@ def remote_to_local(sftp, path, remote_index_curr, local_index):
       sftp.get(path, path)
     if sftp.isdir(path):
       sftp.get_r(path, os.path.join(*path_split(path)[:-1]))
-  update_index(local_index, path, (remote_index_curr[SYNC_DATA], remote_index_curr[SYNC_TIME]))
+  update_index(local_index, path, remote_index_curr)
 
 def local_to_remote(sftp, path, local_index_curr, remote_index):
   if not exists(local_index_curr):
@@ -202,15 +210,9 @@ def local_to_remote(sftp, path, local_index_curr, remote_index):
       except IOError:
         pass
       sftp.put_r(path, path)
-  update_index(remote_index, path, (local_index_curr[SYNC_DATA], local_index_curr[SYNC_TIME]))
+  update_index(remote_index, path, local_index_curr)
 
 def sync_recursive(sftp, local_index, local_index_curr, remote_index, remote_index_curr, path):
-  def create_file(data, time):
-    file = {}
-    file[SYNC_TIME] = time
-    file[SYNC_DATA] = data
-    return file
-
   # python union of two lists: https://www.pythonpool.com/python-union-of-lists/
   for key in set().union(local_index_curr.keys(), remote_index_curr.keys()):
     if key in [SYNC_DATA, SYNC_TIME]: continue
@@ -264,7 +266,7 @@ class Handler(FileSystemEventHandler):
           update_index(index, event.dest_path, get_file_data(event.dest_path))
     else:
       if is_safe(path_split(event.src_path)):
-        print(f'warning: modification to file system was ignored: {event.src_path}')
+        print(f'debug: modification to file system was ignored: {event.src_path}')
 
 
 def safe_deepcopy(dict):
