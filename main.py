@@ -298,7 +298,7 @@ if len(sys.argv) == 1:
       if index != last_index:
         last_index = safe_deepcopy(index)
         dump_index(index, SYNC_FILE)
-      time.sleep(.1)
+      time.sleep(1)
   except KeyboardInterrupt:
     print('exiting...')
     dump_index(index, SYNC_FILE)
