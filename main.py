@@ -3,33 +3,29 @@
 # https://pysftp.readthedocs.io/en/release_0.2.8/pysftp.html
 # https://stackoverflow.com/questions/38939454/verify-host-key-with-pysftp
 
+from multiprocessing.sharedctypes import Value
 import os
+import re
 import sys
-from threading import current_thread
 import time
 import json
 import copy
 import pysftp
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from FileSystem import LocalFileSystem, SSHFileSystem
+from FileSystem import LOCKFILE as SYNC_LOCKFILE
 
 
-with open('remote.json', 'r') as f:
-  REMOTE = json.loads(f.read())
+# with open('remote.json', 'r') as f:
+  # REMOTE = json.loads(f.read())
 
 LOCAL_CWD = os.getcwd()
-REMOTE_CWD = '/home/server/Files/'
+# REMOTE_CWD = '/home/server/Files/'
 BUF_SIZE = 65536
 FOLDERS_AS_FILE = ['.next', 'node_modules', 'target']
 
 SYNC_FILE = '.sync'
-REMOTE_SYNC_FILE = '.sync.remote'
-SYNC_LOCKFILE = '.sync.lock'
-REMOTE_SYNC_LOCKFILE = '.sync.lock.remote'
-cnopts = pysftp.CnOpts()
-cnopts.hostkeys = None   
-cnopts.compression = True
-REMOTE['cnopts'] = cnopts
 SYNC_DATA = '.sd'
 SYNC_TIME = '.st'
 
@@ -42,33 +38,33 @@ def path_split(path):
 
 EMPTY_INDEX = {'.': {SYNC_TIME: get_ms()}}
 
-def is_file(index, name):
+def index_is_file(index, name):
   if name in FOLDERS_AS_FILE: return True
-  return exists(index) and index[SYNC_DATA] == 1
-def is_directory(index, name):
+  return index_exists(index) and index[SYNC_DATA] == 1
+def index_is_directory(index, name):
   if name in FOLDERS_AS_FILE: return False
-  return exists(index) and index[SYNC_DATA] == 0
-def exists(index):
+  return index_exists(index) and index[SYNC_DATA] == 0
+def index_exists(index):
   return SYNC_DATA in index and index[SYNC_DATA] is not None
-def has_data_changed(index1, index2):
+def index_has_data_changed(index1, index2):
   return index1[SYNC_TIME] != index2[SYNC_TIME]
 
-def create_file(data, time):
+def index_create_file(data, time):
   file = {}
   file[SYNC_TIME] = time
   file[SYNC_DATA] = data
   return file
+
 def get_file_data(path):
   split_path = path_split(path)
   if not os.path.exists(path):
-    return create_file(None, get_ms())
+    return index_create_file(None, get_ms())
   if os.path.isfile(path) or os.path.islink(path) or split_path[-1] in FOLDERS_AS_FILE:
-    return create_file(1, get_ms())
+    return index_create_file(1, get_ms())
   if os.path.isdir(path):
-    return create_file(0, get_ms())
+    return index_create_file(0, get_ms())
   print(f'debug: could not get file data: {path}. file is assumed deleted')
-  return create_file(None, get_ms())
-
+  return index_create_file(None, get_ms())
 
 
 def load_index(path):
@@ -92,7 +88,7 @@ def dump_index(index, path):
     print(f'warning: could not dump index: {path}')
 
 
-def update_index_recursive():
+def update_index_recursively():
   # https://stackoverflow.com/questions/19587118/iterating-through-directories-with-python
   # https://stackoverflow.com/questions/7201203/python-current-directory-in-an-os-walk
   print('updating index recursively...')
@@ -102,18 +98,16 @@ def update_index_recursive():
     for file in files:
       subdir = subdir.replace(full_path, '', 1)
       path = os.path.join('.', subdir, file)
-      if is_safe(path_split(path)): update_index(index, path, get_file_data(path))
+      if index_is_safe(path_split(path)): update_index(index, path, get_file_data(path))
   dump_index(index, SYNC_FILE)
   print('done.')
 
-def is_safe(path):
+def index_is_safe(path):
   if len(path) == 1 and path[0] == '.': return False
   # if '.mp4' in path[-1]: return index
   # if 'node_modules' in path: return index
   if SYNC_FILE in path: return False
-  if REMOTE_SYNC_FILE in path: return False
   if SYNC_LOCKFILE in path: return False
-  if REMOTE_SYNC_LOCKFILE in path: return False
   return True
 
 def update_index(index, path, file_data):
@@ -133,106 +127,76 @@ def update_index(index, path, file_data):
     current_index[subdirectory][SYNC_DATA] = 0
     current_index = current_index[subdirectory]
 
-  # if filename in current_index:
-    # print(f'debug: filename already in index: {filename} with data: {current_index[filename]}')
-    # print(f'debug: overriding file with data: { {**current_index[filename], **file_data} }')
   # https://stackoverflow.com/questions/38987/how-do-i-merge-two-dictionaries-in-a-single-expression-take-union-of-dictionari
   if filename not in current_index: current_index[filename] = {}
   current_index[filename] = {**current_index[filename], **file_data}
 
-def sync_with_remote():
-  print('syncing files with remote...')
+def sync_with_remote(source, destination):
+  print('syncing files...')
 
-  with pysftp.Connection(**REMOTE) as sftp:
-    sftp.chdir(REMOTE_CWD)
-    print('fetching remote sync file...')
-    try:
-      sftp.get(SYNC_FILE, REMOTE_SYNC_FILE)
-    except FileNotFoundError:
-      print('warning: remote sync file not found. uploading empty sync file instead.')
-      dump_index(EMPTY_INDEX, REMOTE_SYNC_FILE)
-      sftp.put(REMOTE_SYNC_FILE, SYNC_FILE)
-    
-    with open(SYNC_LOCKFILE, 'w') as f: pass
-    sftp.put(SYNC_LOCKFILE, SYNC_LOCKFILE)
+  try:
+    destination_index = json.loads(destination.read_file(SYNC_FILE))
+  except FileNotFoundError:
+    print('warning: destination sync file not found. creating empty sync file instead.')
+    destination.write_file(SYNC_FILE, json.dumps(EMPTY_INDEX, separators=(',', ':')))
+    destination_index = EMPTY_INDEX
+  
+  try:
+    source_index = json.loads(source.read_file(SYNC_FILE))
+  except FileNotFoundError:
+    print('warning: source sync file not found. creating empty sync file instead.')
+    source.write_file(SYNC_FILE, json.dumps(EMPTY_INDEX, separators=(',', ':')))
+    source_index = EMPTY_INDEX
 
-    local_index = load_index(SYNC_FILE)
-    remote_index = load_index(REMOTE_SYNC_FILE)
-    sync_recursive(sftp, local_index, local_index['.'], remote_index, remote_index['.'], '')
-    dump_index(local_index, SYNC_FILE)
-    dump_index(remote_index, REMOTE_SYNC_FILE)
+  source.lock()
+  destination.lock()
+  sync_recursive(source, source_index, source_index['.'], destination, destination_index, destination_index['.'], '')
+  source.unlock()
+  destination.unlock()
 
-    print('updating remote sync file...')
-    sftp.put(REMOTE_SYNC_FILE, SYNC_FILE)
-    os.remove(REMOTE_SYNC_FILE)
-    sftp.remove(SYNC_LOCKFILE)
-    os.remove(SYNC_LOCKFILE)
+  print('updating source sync file...')
+  source.write_file(SYNC_FILE, json.dumps(source_index))
+  print('updating destination sync file...')
+  destination.write_file(SYNC_FILE, json.dumps(source_index))
 
-  time.sleep(.1)
   print('done.')
 
 
-# os remove directory recursive python
-import shutil
-
-def remote_to_local(sftp, path, remote_index_curr, local_index):
-  if not exists(remote_index_curr):
-    print(f'deleting from local: {path}')
-    if os.path.isfile(path) or os.path.islink(path):
-      os.remove(path)
-    if os.path.isdir(path):
-      shutil.rmtree(path)
-  else:
-    print(f'downloading from remote: {path}')
-    if sftp.isfile(path):
-      sftp.get(path, path)
-    if sftp.isdir(path):
-      sftp.get_r(path, os.path.join(*path_split(path)[:-1]))
-  update_index(local_index, path, remote_index_curr)
-
-def local_to_remote(sftp, path, local_index_curr, remote_index):
-  if not exists(local_index_curr):
-    print(f'deleting from remote: {path}')
-    if sftp.isfile(path):
-      sftp.remove(path)
-    if sftp.isdir(path):
-      # https://stackoverflow.com/questions/44151259/is-it-possible-to-remove-directory-with-some-contents-using-pysftp-module
-      # hacky solution...
-      sftp.execute('rm -rf ' + os.path.join(REMOTE_CWD, path).replace(' ', '\\ '))
-      # sftp.rmdir(remote)
-  else:
-    print(f'uploading to remote: {path}')
-    if os.path.isfile(path) or os.path.islink(path):
-      sftp.put(path, path)
-    if os.path.isdir(path):
-      try:
-        sftp.mkdir(path)
-      except IOError:
-        pass
-      sftp.put_r(path, path)
-  update_index(remote_index, path, local_index_curr)
-
-def sync_recursive(sftp, local_index, local_index_curr, remote_index, remote_index_curr, path):
+def sync_recursive(source, source_index, source_index_curr, destination, destination_index, destination_index_curr, path):
   # python union of two lists: https://www.pythonpool.com/python-union-of-lists/
-  for key in set().union(local_index_curr.keys(), remote_index_curr.keys()):
+  for key in set().union(source_index_curr.keys(), destination_index_curr.keys()):
     if key in [SYNC_DATA, SYNC_TIME]: continue
 
     full_path = os.path.join('.', path, key)
 
-    if key not in local_index_curr:
-      local_index_curr[key] = create_file(None, 0)
-    if key not in remote_index_curr:
-      remote_index_curr[key] = create_file(None, 0)
+    if key not in source_index_curr:
+      source_index_curr[key] = index_create_file(None, 0)
+    if key not in destination_index_curr:
+      destination_index_curr[key] = index_create_file(None, 0)
 
-    if is_directory(local_index_curr[key], key) and is_directory(remote_index_curr[key], key):
-      sync_recursive(sftp, local_index, local_index_curr[key], remote_index, remote_index_curr[key], os.path.join(path, key))
-    elif has_data_changed(local_index_curr[key], remote_index_curr[key]):
-      local_sync_time = local_index_curr[key][SYNC_TIME]
-      remote_sync_time = remote_index_curr[key][SYNC_TIME]
-      if local_sync_time < remote_sync_time:
-        remote_to_local(sftp, full_path, remote_index_curr[key], local_index)
+    if index_is_directory(source_index_curr[key], key) and index_is_directory(destination_index_curr[key], key):
+      sync_recursive(source, source_index, source_index_curr[key], destination, destination_index, destination_index_curr[key], os.path.join(path, key))
+    elif index_has_data_changed(source_index_curr[key], destination_index_curr[key]):
+      source_sync_time = source_index_curr[key][SYNC_TIME]
+      destination_sync_time = destination_index_curr[key][SYNC_TIME]
+      if source_sync_time < destination_sync_time:
+        # destination to source
+        if not index_exists(destination_index_curr[key]):
+          print(f'deleting from source: {full_path}')
+          source.remove(full_path)
+        else:
+          print(f'transferring from destination to source: {full_path}')
+          source.from_local_path(destination.to_local_path(full_path), full_path)
+        update_index(source_index, full_path, destination_index_curr)
       else:
-        local_to_remote(sftp, full_path, local_index_curr[key], remote_index)
+        # source to destination
+        if not index_exists(source_index_curr[key]):
+          print(f'deleting from destination: {full_path}')
+          destination.remove(full_path)
+        else:
+          print(f'transferring from source to destination: {full_path}')
+          destination.from_local_path(source.to_local_path(full_path), full_path)
+        update_index(destination_index, full_path, source_index_curr)
 
 
 index = load_index(SYNC_FILE)
@@ -256,16 +220,16 @@ class Handler(FileSystemEventHandler):
         index = load_index(SYNC_FILE)
     if not is_sync_lockfile_present:
       if event.event_type in ['modified', 'deleted', 'created', 'moved']:
-        if is_safe(path_split(event.src_path)): 
+        if index_is_safe(path_split(event.src_path)): 
           if event.event_type in ['modified'] and get_file_data(event.src_path) == 0: return # file modified inside directory
           print(f'updating index: {event.src_path}')
           update_index(index, event.src_path, get_file_data(event.src_path))
       if event.event_type in ['moved']:
-        if is_safe(path_split(event.dest_path)):
+        if index_is_safe(path_split(event.dest_path)):
           print(f'updating index: {event.dest_path}')
           update_index(index, event.dest_path, get_file_data(event.dest_path))
     else:
-      if is_safe(path_split(event.src_path)):
+      if index_is_safe(path_split(event.src_path)):
         print(f'debug: modification to file system was ignored: {event.src_path}')
 
 
@@ -283,10 +247,46 @@ def watching():
   else: print('watching for changes and updating index automatically.')
   print('run again with `index` as parameter to force-update the index.')
   print('run again with `sync` as parameter to sync files with remote.')
+  # TODO: update usage
+  # TODO: update readme
   print()
 
 def usage():
   print('parameter parsing failed. exiting.')
+  exit(1)
+
+def parse_SSH_path(argument):
+  # https://stackoverflow.com/questions/10059673/named-regular-expression-group-pgroup-nameregexp-what-does-p-stand-for
+  credentials = re.search(r'(?P<username>.+?)@(?P<host>.+?):(?P<port>.+?)/(?P<path>.+)', argument)
+  if credentials is None: return None
+
+  credentials = credentials.groupdict()
+  credentials['path'] = '/' + credentials['path']
+  try:
+    credentials['port'] = int(credentials['port'])
+  except ValueError:
+    return None
+
+
+  cnopts = pysftp.CnOpts()
+  cnopts.hostkeys = None   
+  cnopts.compression = True
+  credentials['cnopts'] = cnopts
+
+  return credentials
+
+def parse_local_path(argument):
+  return { 'path': os.path.abspath(argument) }
+
+def get_filesystem(argument):
+  config = parse_SSH_path(argument)
+  if config is not None: return SSHFileSystem(config)
+
+  config = parse_local_path(argument)
+  if config is not None: return LocalFileSystem(config)
+
+  return None
+
 
 if len(sys.argv) == 1:
   watching()
@@ -305,11 +305,18 @@ if len(sys.argv) == 1:
     observer.stop()
     observer.join()
 elif len(sys.argv) == 2:
-  if sys.argv[1] == 'sync':
-    sync_with_remote()
-  elif sys.argv[1] == 'index':
-    update_index_recursive()
+  if sys.argv[1] == 'index':
+    update_index_recursively()
   else:
     usage()
+elif len(sys.argv) == 4:
+  if sys.argv[1] == 'sync':
+    source = get_filesystem(sys.argv[2])
+    destination = get_filesystem(sys.argv[3])
+
+    # print(f'source: {source.path}')
+    # print(f'destination: {destination.path}')
+
+    sync_with_remote(source, destination)
 else:
   usage()
