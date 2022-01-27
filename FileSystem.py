@@ -124,9 +124,11 @@ class SSHFileSystem:
 
     if self.connection.isfile(path):
       out_path = os.path.join(tempdir, path)
+      os.makedirs(os.path.dirname(out_path), exist_ok=True)
       self.connection.get(path, out_path)
     if self.connection.isdir(path):
       out_path = os.path.join(tempdir, *path_split(path)[:-1])
+      os.makedirs(os.path.dirname(out_path), exist_ok=True)
       self.connection.get_r(path, out_path)
 
     return out_path
