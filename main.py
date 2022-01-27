@@ -239,9 +239,7 @@ def watching():
   if is_sync_lockfile_present: print('sync lockfile exists. ignoring all changes to file system.')
   else: print('watching for changes and updating index automatically.')
   print('run again with `index` as parameter to force-update the index.')
-  print('run again with `sync` as parameter to sync files with remote.')
-  # TODO: update usage
-  # TODO: update readme
+  print('run again with `sync <source> <destination>` as parameter to sync files.')
   print()
 
 def usage():
