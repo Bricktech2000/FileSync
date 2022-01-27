@@ -96,12 +96,14 @@ class SSHFileSystem:
     self.connection.put(temp_file, abs_path)
   
   def remove(self, path):
+    abs_path = os.path.join(self.path, path)
+
     if self.connection.isfile(path):
       self.connection.remove(path)
     if self.connection.isdir(path):
       # https://stackoverflow.com/questions/44151259/is-it-possible-to-remove-directory-with-some-contents-using-pysftp-module
       # hacky solution...
-      self.connection.execute('rm -rf ' + os.path.join(REMOTE_CWD, path).replace(' ', '\\ '))
+      self.connection.execute('rm -rf ' + abs_path.replace(' ', '\\ '))
       # sftp.rmdir(remote)
 
   # local_path must be absolute and path must be relative

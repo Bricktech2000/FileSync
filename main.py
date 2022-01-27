@@ -17,14 +17,7 @@ from FileSystem import LocalFileSystem, SSHFileSystem
 from FileSystem import LOCKFILE as SYNC_LOCKFILE
 
 
-# with open('remote.json', 'r') as f:
-  # REMOTE = json.loads(f.read())
-
-LOCAL_CWD = os.getcwd()
-# REMOTE_CWD = '/home/server/Files/'
-BUF_SIZE = 65536
 FOLDERS_AS_FILE = ['.next', 'node_modules', 'target']
-
 SYNC_FILE = '.sync'
 SYNC_DATA = '.sd'
 SYNC_TIME = '.st'
@@ -92,7 +85,7 @@ def update_index_recursively():
   # https://stackoverflow.com/questions/19587118/iterating-through-directories-with-python
   # https://stackoverflow.com/questions/7201203/python-current-directory-in-an-os-walk
   print('updating index recursively...')
-  full_path = LOCAL_CWD + '/'
+  full_path = os.getcwd() + '/'
   index = EMPTY_INDEX
   for subdir, dirs, files in os.walk(full_path):
     for file in files:
