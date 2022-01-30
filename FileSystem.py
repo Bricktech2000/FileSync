@@ -45,6 +45,8 @@ class LocalFileSystem:
     # https://stackoverflow.com/questions/123198/how-to-copy-files
     # https://www.geeksforgeeks.org/python-shutil-copytree-method/
     # https://stackoverflow.com/questions/2793789/create-destination-path-for-shutil-copy-files
+    if local_path is None: return
+
     if os.path.isfile(local_path) or os.path.islink(local_path):
       os.makedirs(os.path.dirname(abs_path), exist_ok=True)
       shutil.copy(local_path, abs_path)
@@ -132,6 +134,10 @@ class SSHFileSystem:
       out_path = os.path.join(tempdir, *path_split(path)[:-1])
       os.makedirs(os.path.dirname(out_path), exist_ok=True)
       self.connection.get_r(path, out_path)
+
+
+    if out_path is None:
+      print(f'debug: file desynced with sync file: {path}')
 
     return out_path
   
