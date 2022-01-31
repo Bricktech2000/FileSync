@@ -17,10 +17,14 @@ from FileSystem import LocalFileSystem, SSHFileSystem
 from FileSystem import LOCKFILE as SYNC_LOCKFILE
 
 
-FOLDERS_AS_FILE = ['.next', 'node_modules', 'target']
+SYNC_DIR_AS_FILE = ['node_modules', 'target']
+SYNC_IGNORE = ['.next']
+
+
 SYNC_FILE = '.sync'
 SYNC_DATA = '.sd'
 SYNC_TIME = '.st'
+SYNC_IGNORE += [SYNC_FILE, SYNC_LOCKFILE]
 
 def get_ms():
   # https://www.geeksforgeeks.org/get-current-time-in-milliseconds-using-python/
@@ -32,10 +36,10 @@ def path_split(path):
 EMPTY_INDEX = {'.': {SYNC_TIME: get_ms()}}
 
 def index_is_file(index, name):
-  if name in FOLDERS_AS_FILE: return True
+  if name in SYNC_DIR_AS_FILE: return True
   return index_exists(index) and index[SYNC_DATA] == 1
 def index_is_directory(index, name):
-  if name in FOLDERS_AS_FILE: return False
+  if name in SYNC_DIR_AS_FILE: return False
   return index_exists(index) and index[SYNC_DATA] == 0
 def index_exists(index):
   return SYNC_DATA in index and index[SYNC_DATA] is not None
@@ -52,7 +56,7 @@ def get_file_data(path):
   split_path = path_split(path)
   if not os.path.exists(path):
     return index_create_file(None, get_ms())
-  if os.path.isfile(path) or os.path.islink(path) or split_path[-1] in FOLDERS_AS_FILE:
+  if os.path.isfile(path) or os.path.islink(path) or split_path[-1] in SYNC_DIR_AS_FILE:
     return index_create_file(1, get_ms())
   if os.path.isdir(path):
     return index_create_file(0, get_ms())
@@ -97,17 +101,14 @@ def update_index_recursively():
 
 def index_is_safe(path):
   if len(path) == 1 and path[0] == '.': return False
-  # if '.mp4' in path[-1]: return index
-  # if 'node_modules' in path: return index
-  if SYNC_FILE in path: return False
-  if SYNC_LOCKFILE in path: return False
+  if SYNC_IGNORE in path: return False
   return True
 
 def update_index(index, path, file_data):
   path = path_split(path)
 
   for name in path[:-1]:
-    if name in FOLDERS_AS_FILE:
+    if name in SYNC_DIR_AS_FILE:
       return
 
   filename = path[-1]
