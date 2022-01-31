@@ -135,9 +135,8 @@ class SSHFileSystem:
       os.makedirs(os.path.dirname(out_path), exist_ok=True)
       self.connection.get_r(path, out_path)
 
-
     if out_path is None:
-      print(f'debug: file desynced with sync file: {path}')
+      print(f'DEBUG: file likely desynced with sync file: {path}')
 
     return out_path
   

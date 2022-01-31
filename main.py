@@ -56,7 +56,7 @@ def get_file_data(path):
     return index_create_file(1, get_ms())
   if os.path.isdir(path):
     return index_create_file(0, get_ms())
-  print(f'debug: could not get file data: {path}. file is assumed deleted')
+  print(f'DEBUG: could not get file data: {path}. file is assumed deleted')
   return index_create_file(None, get_ms())
 
 
@@ -69,7 +69,7 @@ def load_index(path):
     with open(path, 'r') as f:
       return json.loads(f.read())
   except:
-    print(f'error: could not load index: {path}')
+    print(f'ERROR: could not load index: {path}')
     raise Exception("could not load index")
 
 def dump_index(index, path):
@@ -78,7 +78,7 @@ def dump_index(index, path):
     with open(path, 'w') as f:
       f.write(json.dumps(index, separators=(',', ':')))
   except:
-    print(f'warning: could not dump index: {path}')
+    print(f'WARNING: could not dump index: {path}')
 
 
 def update_index_recursively():
@@ -130,14 +130,14 @@ def sync_with_remote(source, destination):
   try:
     destination_index = json.loads(destination.read_file(SYNC_FILE))
   except FileNotFoundError:
-    print('warning: destination sync file not found. creating empty sync file instead.')
+    print('WARNING: destination sync file not found. creating empty sync file instead.')
     destination.write_file(SYNC_FILE, json.dumps(EMPTY_INDEX, separators=(',', ':')))
     destination_index = EMPTY_INDEX
   
   try:
     source_index = json.loads(source.read_file(SYNC_FILE))
   except FileNotFoundError:
-    print('warning: source sync file not found. creating empty sync file instead.')
+    print('WARNING: source sync file not found. creating empty sync file instead.')
     source.write_file(SYNC_FILE, json.dumps(EMPTY_INDEX, separators=(',', ':')))
     source_index = EMPTY_INDEX
 
@@ -175,19 +175,19 @@ def sync_recursive(source, source_index, source_index_curr, destination, destina
       if source_sync_time < destination_sync_time:
         # destination to source
         if not index_exists(destination_index_curr[key]):
-          print(f'deleting from source: {full_path}')
+          print(f'delete src: {full_path}')
           source.remove(full_path)
         else:
-          print(f'transferring from destination to source: {full_path}')
+          print(f'dst to src: {full_path}')
           source.from_local_path(destination.to_local_path(full_path), full_path)
         update_index(source_index, full_path, destination_index_curr)
       else:
         # source to destination
         if not index_exists(source_index_curr[key]):
-          print(f'deleting from destination: {full_path}')
+          print(f'delete dst: {full_path}')
           destination.remove(full_path)
         else:
-          print(f'transferring from source to destination: {full_path}')
+          print(f'src to dst: {full_path}')
           destination.from_local_path(source.to_local_path(full_path), full_path)
         update_index(destination_index, full_path, source_index_curr)
 
@@ -215,15 +215,15 @@ class Handler(FileSystemEventHandler):
       if event.event_type in ['modified', 'deleted', 'created', 'moved']:
         if index_is_safe(path_split(event.src_path)): 
           if event.event_type in ['modified'] and get_file_data(event.src_path) == 0: return # file modified inside directory
-          print(f'updating index: {event.src_path}')
+          # print(f'updating index: {event.src_path}')
           update_index(index, event.src_path, get_file_data(event.src_path))
       if event.event_type in ['moved']:
         if index_is_safe(path_split(event.dest_path)):
-          print(f'updating index: {event.dest_path}')
+          # print(f'updating index: {event.dest_path}')
           update_index(index, event.dest_path, get_file_data(event.dest_path))
     else:
       if index_is_safe(path_split(event.src_path)):
-        print(f'debug: modification to file system was ignored: {event.src_path}')
+        print(f'DEBUG: modification to file system was ignored: {event.src_path}')
 
 
 def safe_deepcopy(dict):
@@ -231,7 +231,7 @@ def safe_deepcopy(dict):
     try:
       return copy.deepcopy(dict)
     except:
-      print('warning: error deepcopying index. trying again...')
+      print('WARNING: error deepcopying index. trying again...')
       time.sleep(.1)
 
 def watching():
@@ -304,9 +304,6 @@ elif len(sys.argv) == 4:
   if sys.argv[1] == 'sync':
     source = get_filesystem(sys.argv[2])
     destination = get_filesystem(sys.argv[3])
-
-    # print(f'source: {source.path}')
-    # print(f'destination: {destination.path}')
 
     sync_with_remote(source, destination)
 else:
