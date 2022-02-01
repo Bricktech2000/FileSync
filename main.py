@@ -101,7 +101,8 @@ def update_index_recursively():
 
 def index_is_safe(path):
   if len(path) == 1 and path[0] == '.': return False
-  if SYNC_IGNORE in path: return False
+  for ignore in SYNC_IGNORE:
+    if ignore in path: return False
   return True
 
 def update_index(index, path, file_data):
@@ -182,7 +183,7 @@ def sync_recursive(source, source_index, source_index_curr, destination, destina
           print(f'dst to src: {full_path}')
           source.from_local_path(destination.to_local_path(full_path), full_path)
         update_index(source_index, full_path, destination_index_curr)
-      else:
+      if source_sync_time > destination_sync_time:
         # source to destination
         if not index_exists(source_index_curr[key]):
           print(f'delete dst: {full_path}')

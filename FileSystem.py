@@ -41,11 +41,12 @@ class LocalFileSystem:
 
   # local_path must be absolute and path must be relative
   def from_local_path(self, local_path, path):
+    if local_path is None: return
     abs_path = os.path.join(self.path, path)
+
     # https://stackoverflow.com/questions/123198/how-to-copy-files
     # https://www.geeksforgeeks.org/python-shutil-copytree-method/
     # https://stackoverflow.com/questions/2793789/create-destination-path-for-shutil-copy-files
-    if local_path is None: return
 
     if os.path.isfile(local_path) or os.path.islink(local_path):
       os.makedirs(os.path.dirname(abs_path), exist_ok=True)
@@ -56,7 +57,13 @@ class LocalFileSystem:
 
   # local_path will be absolute and path must be relative
   def to_local_path(self, path):
-    return os.path.join(self.path, path)
+    out_path = os.path.join(self.path, path)
+    out_path = out_path if os.path.isdir(path) or os.path.isfile(path) else None
+
+    if out_path is None:
+      print(f'DEBUG: file likely desynced with sync file: {path}')
+
+    return out_path
 
   def lock(self):
     abs_path = os.path.join(self.path, LOCKFILE)
@@ -86,7 +93,8 @@ class SSHFileSystem:
     temp_file = os.path.join(tempfile.gettempdir(), path)
     self.connection.get(path, temp_file)
 
-    return open(temp_file, 'r').read()
+    with open(temp_file, 'r') as f:
+      return f.read()
 
   def write_file(self, path, data):
     temp_file = os.path.join(tempfile.gettempdir(), path)
@@ -110,10 +118,14 @@ class SSHFileSystem:
 
   # local_path must be absolute and path must be relative
   def from_local_path(self, local_path, path):
+    if local_path is None: return
     abs_path = os.path.join(self.path, path)
 
     if os.path.isfile(local_path) or os.path.islink(local_path):
-      self.connection.put(local_path, abs_path)
+      try:
+        self.connection.put(local_path, abs_path)
+      except (FileNotFoundError, PermissionError):
+        print(f'DEBUG: index desynced or permission error: {path}')
     if os.path.isdir(local_path):
       try:
         self.connection.mkdir(abs_path)
