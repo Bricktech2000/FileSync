@@ -121,17 +121,17 @@ class SSHFileSystem:
     if local_path is None: return
     abs_path = os.path.join(self.path, path)
 
-    if os.path.isfile(local_path) or os.path.islink(local_path):
-      try:
-        self.connection.put(local_path, abs_path)
-      except (FileNotFoundError, PermissionError):
-        print(f'DEBUG: index desynced or permission error: {path}')
-    if os.path.isdir(local_path):
-      try:
-        self.connection.mkdir(abs_path)
-      except IOError:
-        pass
-      self.connection.put_r(local_path, abs_path)
+    try:
+      if os.path.isfile(local_path) or os.path.islink(local_path):
+          self.connection.put(local_path, abs_path)
+      if os.path.isdir(local_path):
+        try:
+          self.connection.mkdir(abs_path)
+        except IOError:
+          pass
+        self.connection.put_r(local_path, abs_path)
+    except (FileNotFoundError, PermissionError):
+      print(f'DEBUG: index desynced or permission error: {path}')
 
   # local_path will be absolute and path must be relative
   def to_local_path(self, path):
