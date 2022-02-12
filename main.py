@@ -143,11 +143,18 @@ def sync_with_remote(source, destination):
     source.write_file(SYNC_FILE, json.dumps(EMPTY_INDEX, separators=(',', ':')))
     source_index = EMPTY_INDEX
 
+  err = None
   source.lock()
   destination.lock()
-  sync_recursive(source, source_index, source_index['.'], destination, destination_index, destination_index['.'], '')
+
+  try:
+    sync_recursive(source, source_index, source_index['.'], destination, destination_index, destination_index['.'], '')
+  except BaseException as e:
+    err = e
+
   source.unlock()
   destination.unlock()
+  if err: raise err
 
   print('updating source sync file...')
   source.write_file(SYNC_FILE, json.dumps(source_index))
