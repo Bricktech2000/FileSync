@@ -132,16 +132,14 @@ def sync_with_remote(source, destination):
   try:
     destination_index = json.loads(destination.read_file(SYNC_FILE))
   except FileNotFoundError:
-    print('WARNING: destination sync file not found. creating empty sync file instead.')
-    destination.write_file(SYNC_FILE, json.dumps(EMPTY_INDEX, separators=(',', ':')))
-    destination_index = EMPTY_INDEX
+    print('ERROR: destination index not found. execute deamon script to initialize working directory. aborting.')
+    return
   
   try:
     source_index = json.loads(source.read_file(SYNC_FILE))
   except FileNotFoundError:
-    print('WARNING: source sync file not found. creating empty sync file instead.')
-    source.write_file(SYNC_FILE, json.dumps(EMPTY_INDEX, separators=(',', ':')))
-    source_index = EMPTY_INDEX
+    print('ERROR: source index not found. execute deamon script to initialize working directory. aborting.')
+    return
 
   err = None
   source.lock()
@@ -156,9 +154,9 @@ def sync_with_remote(source, destination):
   destination.unlock()
   if err: raise err
 
-  print('updating source sync file...')
+  print('updating source index...')
   source.write_file(SYNC_FILE, json.dumps(source_index))
-  print('updating destination sync file...')
+  print('updating destination index...')
   destination.write_file(SYNC_FILE, json.dumps(source_index))
 
   print('done.')
@@ -201,9 +199,9 @@ def sync_recursive(source, source_index, source_index_curr, destination, destina
         update_index(destination_index, full_path, source_index_curr)
 
 
-index = load_index(SYNC_FILE)
-last_index = copy.deepcopy(index)
-is_sync_lockfile_present = os.path.exists(SYNC_LOCKFILE)
+index = None
+last_index = None
+is_sync_lockfile_present = None
 
 class Handler(FileSystemEventHandler):
   @staticmethod
@@ -214,10 +212,10 @@ class Handler(FileSystemEventHandler):
     # https://stackoverflow.com/questions/3167154/how-to-split-a-dos-path-into-its-components-in-python
     if path_split(event.src_path)[-1] == SYNC_LOCKFILE:
       if event.event_type in ['created', 'modified']:
-        print('sync lockfile got created. ignoring all changes to file system.')
+        print('index lockfile got created. ignoring all changes to file system.')
         is_sync_lockfile_present = True
       if event.event_type in ['deleted', 'moved']:
-        print('sync lockfile got deleted. watching for changes to file system.')
+        print('index lockfile got deleted. watching for changes to file system.')
         is_sync_lockfile_present = False
         index = load_index(SYNC_FILE)
     if not is_sync_lockfile_present:
@@ -245,7 +243,7 @@ def safe_deepcopy(dict):
 
 def watching():
   print()
-  if is_sync_lockfile_present: print('sync lockfile exists. ignoring all changes to file system.')
+  if is_sync_lockfile_present: print('index lockfile exists. ignoring all changes to file system.')
   else: print('watching for changes and updating index automatically.')
   print('run again with `index` as parameter to force-update the index.')
   print('run again with `sync <source> <destination>` as parameter to sync files.')
@@ -289,10 +287,19 @@ def get_filesystem(argument):
 
 
 if len(sys.argv) == 1:
+  index = load_index(SYNC_FILE)
+  is_sync_lockfile_present = os.path.exists(SYNC_LOCKFILE)
+
   watching()
+
+  if not os.path.exists(SYNC_FILE):
+    print('working directory initialized with empty index.')
+    dump_index(EMPTY_INDEX, SYNC_FILE)
+
   observer = Observer()
   observer.schedule(Handler(), '.', recursive=True)
   observer.start()
+
   try:
     while True:
       if index != last_index:
@@ -304,16 +311,19 @@ if len(sys.argv) == 1:
     dump_index(index, SYNC_FILE)
     observer.stop()
     observer.join()
+
 elif len(sys.argv) == 2:
   if sys.argv[1] == 'index':
     update_index_recursively()
   else:
     usage()
+
 elif len(sys.argv) == 4:
   if sys.argv[1] == 'sync':
     source = get_filesystem(sys.argv[2])
     destination = get_filesystem(sys.argv[3])
 
     sync_with_remote(source, destination)
+
 else:
   usage()
