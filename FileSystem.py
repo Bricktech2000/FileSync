@@ -1,7 +1,5 @@
-from doctest import OutputChecker
 import os
-from re import T
-from threading import local
+import time
 import pysftp
 import tempfile
 import shutil
@@ -92,6 +90,7 @@ class SSHFileSystem:
   def read_file(self, path):
     temp_file = os.path.join(tempfile.gettempdir(), path)
     self.connection.get(path, temp_file)
+    time.sleep(0.1)
 
     with open(temp_file, 'r') as f:
       return f.read()

@@ -155,9 +155,9 @@ def sync_with_remote(source, destination):
   if err: raise err
 
   print('updating source index...')
-  source.write_file(SYNC_FILE, json.dumps(source_index))
+  source.write_file(SYNC_FILE, json.dumps(source_index, separators=(',', ':')))
   print('updating destination index...')
-  destination.write_file(SYNC_FILE, json.dumps(source_index))
+  destination.write_file(SYNC_FILE, json.dumps(source_index, separators=(',', ':')))
 
   print('done.')
 
@@ -187,7 +187,7 @@ def sync_recursive(source, source_index, source_index_curr, destination, destina
         else:
           print(f'dst to src: {full_path}')
           source.from_local_path(destination.to_local_path(full_path), full_path)
-        update_index(source_index, full_path, destination_index_curr)
+        update_index(source_index, full_path, destination_index_curr[key])
       if source_sync_time > destination_sync_time:
         # source to destination
         if not index_exists(source_index_curr[key]):
@@ -196,7 +196,7 @@ def sync_recursive(source, source_index, source_index_curr, destination, destina
         else:
           print(f'src to dst: {full_path}')
           destination.from_local_path(source.to_local_path(full_path), full_path)
-        update_index(destination_index, full_path, source_index_curr)
+        update_index(destination_index, full_path, source_index_curr[key])
 
 
 index = None
