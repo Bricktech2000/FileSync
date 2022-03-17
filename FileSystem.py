@@ -45,12 +45,17 @@ class LocalFileSystem:
     # https://stackoverflow.com/questions/123198/how-to-copy-files
     # https://www.geeksforgeeks.org/python-shutil-copytree-method/
     # https://stackoverflow.com/questions/2793789/create-destination-path-for-shutil-copy-files
+    # https://stackoverflow.com/questions/12683834/how-to-copy-directory-recursively-in-python-and-overwrite-all
 
     if os.path.isfile(local_path) or os.path.islink(local_path):
       os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+      if os.path.exists(abs_path):
+        os.remove(abs_path)
       shutil.copy(local_path, abs_path)
     if os.path.isdir(local_path):
       os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+      if os.path.exists(abs_path):
+        shutil.rmtree(abs_path)
       shutil.copytree(local_path, abs_path)
 
   # local_path will be absolute and path must be relative
