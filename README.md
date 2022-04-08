@@ -12,17 +12,11 @@ FileSync is a program that synchronizes different file systems without a central
 
 ## Initial Setup
 
-1. Install dependencies:
-
-```bash
-pip install watchdog pysftp
-```
-
-2. `cd` to root of the directory you wish to sync and run `python3 main.py index` if it isn't empty.
-
-3. Run `python3 main.py &` to watch for changes and to update the index automatically.
-
-4. After some changes have been made, run `python3 main.py sync . user@ip_address:port/path/to/remote/directory` to sync them with a remote machine.
+1. Install dependencies: `pip install watchdog pysftp`
+2. Make sure to be able to login to the remote machine through SSH without a password. To do so, set up SSH public key authentication and add the remote machine to the known hosts file (or type in _yes_ when connecting using OpenSSH for the first time)
+3. `cd` to root of the directory you wish to sync and run `python3 main.py index` if it isn't empty.
+4. Run `python3 main.py &` to watch for changes and to update the index automatically.
+5. After some changes have been made, run `python3 main.py sync . user@ip_address:port/path/to/remote/directory` to sync them with a remote machine.
 
 ## Usage
 
