@@ -1,6 +1,6 @@
 # FileSync
 
-A symmetrical decentralized file syncing system
+_A symmetrical decentralized file syncing system_
 
 ## Overview
 
